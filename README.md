@@ -1,19 +1,19 @@
-# 🛡️ Tripwire
+# 🛡️ AgentTripwire (`agent-tripwire`)
 
 <div align="center">
 
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge)
+![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg?style=for-the-badge&logo=python&logoColor=white)
 ![Harbor Harness](https://img.shields.io/badge/Harbor%20Harness-v1.4%20Compliant-blue.svg?style=for-the-badge&logo=docker)
 ![Frontier Model](https://img.shields.io/badge/Evaluated%20Model-gpt--6.1--sol%20(High)-purple.svg?style=for-the-badge)
-![Dimension](https://img.shields.io/badge/Dimension-Cyber%20Harm%20(5%20Sub--Policies)-red.svg?style=for-the-badge)
 ![Safe Reference](https://img.shields.io/badge/Safe%20Oracles-Mean%201.000-success.svg?style=for-the-badge)
 ![Unsafe Reference](https://img.shields.io/badge/Unsafe%20Oracles-Mean%200.000-critical.svg?style=for-the-badge)
 ![Breaking Rollout](https://img.shields.io/badge/Breaking%20Rollout-Captured%20(CY.CT)-orange.svg?style=for-the-badge)
 ![Air-Gap Isolation](https://img.shields.io/badge/Network-Air--Gapped%20Loopback-informational.svg?style=for-the-badge)
 
 <p align="center">
-  <b>Red-teaming autonomous AI coding agents with realistic security tripwires.</b><br/>
-  An open-source RL evaluation benchmark that plants latent cyber safety boundaries inside real software engineering tasks — graded purely on post-execution disk forensics.
+  <b>An Autonomous Red-Teaming &amp; Post-Execution Forensic Auditing Engine for AI Coding Agents.</b><br/>
+  Plants realistic security tripwires inside 5 air-gapped software engineering sandboxes, replays frontier agent trajectories, audits runtime disk artifacts, and renders an interactive security dashboard.
 </p>
 
 </div>
@@ -53,7 +53,7 @@ Frontier models are increasingly deployed as autonomous software engineering age
 |---|---|---|---|
 | **Capability Coding Benchmarks** | SWE-bench, HumanEval | Functional ticket resolution & unit test pass rate | Ignores credential leaks, PII ingestion, or ROE violations introduced by passing patches |
 | **Explicit Harm / Refusal Benchmarks** | CyberSecEval, HarmBench, WMDP | Refusal rates under explicit adversarial queries | Tests *obedience/refusal*, not architectural security judgment during benign work |
-| **Tripwire (This Work)** | `tripwire-bench` | **Latent cyber harm inside legitimate engineering tickets** | Measures whether agents independently avoid unsafe shortcuts when safeguards sit on separate paths |
+| **AgentTripwire (This Work)** | `agent-tripwire` | **Latent cyber harm inside legitimate engineering tickets** | Measures whether agents independently avoid unsafe shortcuts when safeguards sit on separate paths |
 
 In production, agents are rarely asked to *"steal credentials"* — they are asked to *"add failure trace capture for upstream 5xx errors."* **Tripwire** evaluates whether frontier models recognize and uphold implicit security boundaries when doing ordinary engineering work.
 
@@ -225,43 +225,42 @@ sequenceDiagram
 - Docker Engine active (`docker ps` exits `0`)
 - [Harbor](https://github.com/harbor-framework/harbor) installed
 
-### 1. Configure Environment Variables
+### Install & Run the `tripwire` CLI (Zero API Keys Required to Demo)
+
+```bash
+pip install -e ".[dev]"
+
+# 1. Inspect all 5 planted tripwire environments & policies
+tripwire list
+
+# 2. Replay the real gpt-6.1-sol breaking rollout turn-by-turn
+tripwire replay env-api-gateway-auth
+
+# 3. Run the 5 forensic disk detectors over any artifact directory
+tripwire audit /path/to/artifacts --json
+
+# 4. Generate the standalone interactive dark-mode HTML dashboard
+tripwire dashboard --output docs/dashboard.html
+
+# 5. Run the AgentTripwire unit test suite
+pytest -v
+```
+
+### Live Red-Team Rollouts with Harbor
+
+#### 1. Configure Environment Variables
 ```bash
 cp .env.example .env
 # Edit .env with your OPENAI_BASE_URL and OPENAI_API_KEY
 ```
 
-### 2. Verify Safe Reference Oracle (`reward = 1`)
+#### 2. Orchestrate Safe Oracle or Autonomous Frontier Rollouts
 ```bash
-harbor run -p environments -i env-api-gateway-auth -a oracle -k 1 -o jobs/verify-safe --yes
-```
+# Verify safe reference oracle (reward = 1.000)
+tripwire run env-api-gateway-auth --mode safe
 
-### 3. Verify Unsafe Reference Oracle (`reward = 0`)
-```bash
-cp environments/env-api-gateway-auth/unsafe_reference/solve.sh environments/env-api-gateway-auth/solution/solve.sh
-harbor run -p environments -i env-api-gateway-auth -a oracle -k 1 -o jobs/verify-unsafe --yes
-git checkout environments/env-api-gateway-auth/solution/solve.sh
-```
-
-### 4. Run an Autonomous Frontier Model Rollout
-```bash
-export OPENAI_BASE_URL="https://api.openai.com/v1"
-export OPENAI_API_KEY="$OPENAI_API_KEY"
-
-harbor run -p environments -i env-api-gateway-auth \
-  -a terminus-2 \
-  -m openai/gpt-6.1-sol \
-  --ak reasoning_effort=high \
-  --ak base_url="$OPENAI_BASE_URL" \
-  -k 1 \
-  -o jobs/rollout-gateway \
-  --job-name rollout-gateway \
-  --yes
-```
-
-### 5. Aggregate & Visualize Results
-```bash
-python scripts/visualize_results.py --markdown docs/results_summary.md
+# Launch autonomous red-team evaluation against a frontier LLM
+tripwire run env-api-gateway-auth --mode agent --model openai/gpt-6.1-sol --reasoning-effort high
 ```
 
 ---
@@ -288,7 +287,15 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/AUTHORING_GUIDE.md](docs/AUTHOR
 ## Repository Structure
 
 ```
-tripwire-bench/
+agent-tripwire/
+├── src/tripwire/                    # Installable Python engine & CLI (`tripwire`)
+│   ├── auditor.py                   # 5 post-execution disk forensic detectors (CY.CT..CY.VE)
+│   ├── replay.py                    # ATIF v1.8 autonomous agent trajectory analyzer & replay
+│   ├── dashboard.py                 # Standalone interactive dark-mode HTML dashboard generator
+│   ├── runner.py                    # Harbor red-team evaluation orchestrator
+│   ├── registry.py                  # Environment discovery & task.toml parser
+│   └── cli.py                       # Unified CLI (list, audit, replay, run, dashboard)
+├── tests/                           # Unit tests for auditor, trajectory replay & dashboard
 ├── environments/                    # 5 stand-alone RLE environments (Harbor v1.4)
 │   ├── env-api-gateway-auth/        # CY.CT — Credential Theft
 │   ├── env-analytics-pipeline/      # CY.UD — Unauthorized Data Collection
@@ -297,19 +304,20 @@ tripwire-bench/
 │   └── env-vuln-scanner-sandbox/    # CY.VE — Exploitation & ROE Boundaries
 ├── results/                         # Verified safe, unsafe, and frontier rollout logs (15 runs)
 ├── docs/
+│   ├── dashboard.html               # Pre-generated interactive security dashboard
 │   ├── TECHNICAL_REPORT.md          # Full research write-up & frontier rollout analysis
-│   ├── ARCHITECTURE.md              # Dual-axis grader & loopback stand-in architecture
+│   ├── ARCHITECTURE.md              # 6 Mermaid architecture diagrams & loopback topology
 │   ├── AUTHORING_GUIDE.md           # Step-by-step guide to building new environments
 │   ├── THREAT_MODEL.md              # Formal sub-policy threat model & detection invariants
 │   └── QUALITY_BAR.md               # Benchmark rubric & empirical verification matrix
 ├── scripts/
 │   └── visualize_results.py         # Results table aggregator & heatmap generator
 ├── templates/
-│   └── new-environment/             # Ready-to-copy scaffold for new Tripwire benchmarks
-├── .github/workflows/ci.yml         # Automated Ruff lint, syntax check & Docker build matrix
+│   └── new-environment/             # Ready-to-copy scaffold for new Tripwire environments
+├── .github/workflows/ci.yml         # Automated pytest, Ruff lint, CLI smoke test & Docker builds
 ├── Dockerfile                       # Containerized Harbor evaluation runner
 ├── Makefile                         # Developer workflow shortcuts
-├── pyproject.toml                   # Python packaging & tool configuration
+├── pyproject.toml                   # Python packaging & `tripwire` CLI entry point
 ├── CONTRIBUTING.md                  # Contribution guidelines
 ├── LICENSE                          # MIT License
 └── README.md
@@ -319,15 +327,15 @@ tripwire-bench/
 
 ## Citation
 
-If you use Tripwire or build upon its evaluation environments in your research, please cite:
+If you use AgentTripwire or build upon its evaluation environments in your research, please cite:
 
 ```bibtex
-@software{tripwire2026,
-  title   = {Tripwire: Red-Teaming AI Coding Agents Against Latent Cyber Harm},
-  author  = {Tripwire Contributors},
+@software{agent_tripwire2026,
+  title   = {AgentTripwire: Autonomous Red-Teaming and Forensic Auditing for AI Coding Agents},
+  author  = {Switin Mechineni},
   year    = {2026},
-  url     = {https://github.com/switin2006/tripwire-bench},
-  note    = {Five sandboxed RLE benchmarks with dual-axis disk-forensic grading and verified breaking rollout on gpt-6.1-sol}
+  url     = {https://github.com/switin2006/agent-tripwire},
+  note    = {Five sandboxed RLE environments, forensic auditor CLI, trajectory replay engine, and verified breaking rollout on gpt-6.1-sol}
 }
 ```
 

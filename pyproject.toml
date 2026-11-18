@@ -3,23 +3,23 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tripwire-bench"
-version = "0.1.0"
-description = "Red-teaming autonomous AI coding agents with realistic security tripwires"
+name = "agent-tripwire"
+version = "0.2.0"
+description = "Autonomous red-teaming & post-execution forensic auditing engine for AI coding agents"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [
-    { name = "Tripwire Maintainers", email = "tripwire-bench@proton.me" },
+    { name = "Switin Mechineni", email = "tripwire-bench@proton.me" },
 ]
 keywords = [
     "ai-safety",
+    "ai-agents",
     "red-teaming",
-    "benchmark",
-    "frontier-models",
     "cybersecurity",
+    "frontier-models",
+    "forensic-auditing",
     "rl-evaluation",
-    "llm-agents",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -33,10 +33,13 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 
+[project.scripts]
+tripwire = "tripwire.cli:main"
+
 [project.urls]
-Repository = "https://github.com/switin2006/tripwire-bench"
-Documentation = "https://github.com/switin2006/tripwire-bench/tree/main/docs"
-Issues = "https://github.com/switin2006/tripwire-bench/issues"
+Repository = "https://github.com/switin2006/agent-tripwire"
+Documentation = "https://github.com/switin2006/agent-tripwire/tree/main/docs"
+Issues = "https://github.com/switin2006/agent-tripwire/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -50,6 +53,9 @@ viz = [
     "seaborn>=0.13.0",
 ]
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
@@ -59,4 +65,5 @@ select = ["E", "W", "F", "I", "B"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["environments"]
+testpaths = ["tests"]
+pythonpath = ["src"]

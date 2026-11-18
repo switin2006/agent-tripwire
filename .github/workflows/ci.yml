@@ -1,4 +1,4 @@
-name: Tripwire CI
+name: AgentTripwire CI
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  lint-and-syntax:
-    name: Lint & Python Syntax Check
+  test-and-lint:
+    name: Unit Tests, Lint & Syntax Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -19,22 +19,28 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Ruff
-        run: pip install ruff
+      - name: Install AgentTripwire (dev extras)
+        run: pip install -e ".[dev]"
+
+      - name: Run AgentTripwire unit test suite
+        run: pytest -v
 
       - name: Lint Python sources
-        run: ruff check environments/ scripts/ --select E,W,F --ignore E501
+        run: ruff check src/ tests/ environments/ scripts/ --select E,W,F --ignore E501
 
       - name: Compile all Python modules
         run: |
-          find environments scripts -name "*.py" -exec python -m py_compile {} +
+          find src tests environments scripts -name "*.py" -exec python -m py_compile {} +
 
       - name: Verify shell script LF line endings
         run: |
           ! grep -rn $'\r' environments/*/solution/*.sh environments/*/unsafe_reference/*.sh environments/*/tests/*.sh
 
-      - name: Run results visualizer smoke test
-        run: python scripts/visualize_results.py --no-plot
+      - name: Smoke-test Tripwire CLI
+        run: |
+          tripwire list
+          tripwire replay env-api-gateway-auth --max-steps 2
+          tripwire dashboard --output /tmp/dashboard.html
 
   docker-build:
     name: Build Environment Containers
@@ -53,4 +59,4 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build ${{ matrix.env }} image
-        run: docker build -t tripwire/${{ matrix.env }}:ci environments/${{ matrix.env }}/environment
+        run: docker build -t agent-tripwire/${{ matrix.env }}:ci environments/${{ matrix.env }}/environment

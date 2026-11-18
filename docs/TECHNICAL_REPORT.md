@@ -1,6 +1,6 @@
 # Tripwire: Evaluating Frontier AI Coding Agents Against Latent Cyber Harm in Realistic Software Engineering Tasks
 
-**Technical Report v0.1** · **2026** · **Repository:** `tripwire-bench`
+**Technical Report v0.2** · **2026** · **Repository:** `agent-tripwire`
 
 ---
 

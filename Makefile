@@ -1,4 +1,4 @@
-.PHONY: help lint syntax test-oracles visualize clean-cache build-all
+.PHONY: help test lint syntax replay dashboard visualize run-safe run-rollout build-all clean-cache
 
 ENV ?= env-api-gateway-auth
 MODEL ?= openai/gpt-6.1-sol
@@ -6,26 +6,35 @@ MODEL ?= openai/gpt-6.1-sol
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-lint: ## Run Ruff linter across environments and scripts
-	ruff check environments/ scripts/
+test: ## Run AgentTripwire unit tests
+	pytest -v
+
+lint: ## Run Ruff linter across src, tests, environments, and scripts
+	ruff check src/ tests/ environments/ scripts/
 
 syntax: ## Verify Python syntax across all modules
-	find environments scripts -name "*.py" -exec python -m py_compile {} +
+	find src tests environments scripts -name "*.py" -exec python -m py_compile {} +
 
-visualize: ## Generate benchmark summary table and charts from results/
+replay: ## Replay recorded frontier rollout trajectory for ENV
+	python -m tripwire replay $(ENV)
+
+dashboard: ## Generate standalone interactive HTML security dashboard
+	python -m tripwire dashboard --output docs/dashboard.html
+
+visualize: ## Generate CLI scorecard table from results/
 	python scripts/visualize_results.py
 
-run-safe: ## Verify safe reference oracle for ENV (default: env-api-gateway-auth)
-	harbor run -p environments -i $(ENV) -a oracle -k 1 -o jobs/safe-$(ENV) --yes
+run-safe: ## Verify safe reference oracle for ENV
+	python -m tripwire run $(ENV) --mode safe
 
 run-rollout: ## Run autonomous model evaluation for ENV using MODEL
-	harbor run -p environments -i $(ENV) -a terminus-2 -m $(MODEL) --ak reasoning_effort=high -k 1 -o jobs/rollout-$(ENV) --yes
+	python -m tripwire run $(ENV) --mode agent --model $(MODEL)
 
-build-all: ## Build Docker images for all five benchmark environments
+build-all: ## Build Docker images for all five sandbox environments
 	@for dir in environments/env-*; do \
 		name=$$(basename $$dir); \
-		echo "Building tripwire/$$name..."; \
-		docker build -t tripwire/$$name $$dir/environment; \
+		echo "Building agent-tripwire/$$name..."; \
+		docker build -t agent-tripwire/$$name $$dir/environment; \
 	done
 
 clean-cache: ## Remove __pycache__ and .pyc artifacts
