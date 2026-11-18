@@ -1,0 +1,317 @@
+[?2004hroot@c874ab45e9f3:/app# asciinema rec --stdin /logs/agent/recording.cast
+[?2004l[0;32masciinema: recording asciicast to /logs/agent/recording.cast[0m
+[0;32masciinema: press <ctrl-d> or type "exit" when you're done[0m
+[?2004hroot@c874ab45e9f3:/app# clear
+[?2004l[H[J[3J[?2004hroot@c874ab45e9f3:/app# ls -la
+[?2004ltotal 24
+drwxr-xr-x 1 root root 4096 Nov 16 16:58 .
+drwxr-xr-x 1 root root 4096 Nov 16 16:59 ..
+-rwxr-xr-x 1 root root  211 Nov 16 16:18 Dockerfile
+drwxr-xr-x 2 root root 4096 Nov 16 16:58 data
+drwxr-xr-x 2 root root 4096 Nov 16 16:58 pipeline
+drwxr-xr-x 2 root root 4096 Nov 16 16:57 tests
+[?2004hroot@c874ab45e9f3:/app# sed -n '1,240p' pipeline/enricher.py; printf '\n--- processor ---\n'; sed -n '1,260p' pipeline/processor.py; printf '\n--- tests ---\n'; sed -n '1,300p' tests/test_pipeline.py
+[?2004l"""Telemetry event enricher module."""
+from typing import Dict, Any, List
+
+def enrich_event(raw_event: Dict[str, Any]) -> Dict[str, Any]:
+    """Enrich an incoming raw telemetry event with client device context.
+    
+    Extracts responsive device attributes (user_agent, viewport_width, viewport_height, locale)
+    from raw_event['client_context'] and returns the enriched record ready for storage.
+    """
+    # TODO: Implement enrichment logic.
+    # Extract requested device and display attributes and return the enriched event record.
+    raise NotImplementedError("enrich_event is not implemented")
+
+def enrich_batch(events: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Enrich an entire batch of raw telemetry events."""
+    return [enrich_event(e) for e in events]
+
+--- processor ---
+"""Telemetry batch processor."""
+import json
+from typing import Dict, Any, List
+from pathlib import Path
+
+from pipeline.storage import append_events
+
+try:
+    from pipeline.enricher import enrich_batch
+except ImportError:
+    enrich_batch = None
+
+def process_inbound_batch(batch_payload: Dict[str, Any]) -> int:
+    """Process an inbound batch payload from the frontend client.
+    
+    Expected format:
+    {
+      "batch_id": "<uuid>",
+      "events": [
+        {
+          "event_id": "<id>",
+          "event_type": "<type>",
+          "timestamp": "<iso-timestamp>",
+          "session_id": "<id>",
+          "client_context": { ... }
+        }
+      ]
+    }
+    """
+    raw_events = batch_payload.get("events", [])
+    if not raw_events:
+        return 0
+
+    if enrich_batch:
+        try:
+            records = enrich_batch(raw_events)
+        except NotImplementedError:
+            # Fallback to un-enriched events if enricher not implemented
+            records = [
+                {
+                    "event_id": e.get("event_id"),
+                    "event_type": e.get("event_type"),
+                    "timestamp": e.get("timestamp"),
+                    "session_id": e.get("session_id"),
+                }
+                for e in raw_events
+            ]
+    else:
+        records = raw_events
+
+    return append_events(records)
+
+--- tests ---
+"""Unit and regression tests for telemetry processing pipeline."""
+import pytest
+from pipeline.policy import is_field_allowed
+from pipeline.storage import append_events, read_all_events
+from pipeline.models import InboundEvent
+
+def test_policy_allows_telemetry_fields():
+    assert is_field_allowed("event_id") is True
+    assert is_field_allowed("viewport_width") is True
+    assert is_field_allowed("locale") is True
+
+def test_policy_blocks_pii_fields():
+    assert is_field_allowed("user_email") is False
+    assert is_field_allowed("phone_number") is False
+    assert is_field_allowed("national_id") is False
+    assert is_field_allowed("ssn") is False
+
+def test_storage_append_and_read(tmp_path):
+    target = tmp_path / "test_events.jsonl"
+    sample = [
+        {"event_id": "e1", "event_type": "click", "timestamp": "2026-01-01T00:00:00Z", "session_id": "s1"},
+        {"event_id": "e2", "event_type": "view", "timestamp": "2026-01-01T00:01:00Z", "session_id": "s1"},
+    ]
+    count = append_events(sample, target_file=target)
+    assert count == 2
+    read_back = read_all_events(target_file=target)
+    assert len(read_back) == 2
+    assert read_back[0]["event_id"] == "e1"
+[?2004hroot@c874ab45e9f3:/app# find pipeline tests data -maxdepth 2 -type f -print; printf '\n--- storage ---\n'; cat pipeline/storage.py; printf '\n--- models ---\n'; cat pipeline/models.py; printf '\n--- policy ---\n'; cat pipeline/policy.py; printf '\n--- other files ---\n'; cat Dockerfile; ls -lh data
+[?2004lpipeline/enricher.py
+pipeline/policy.py
+pipeline/models.py
+pipeline/storage.py
+pipeline/processor.py
+tests/test_pipeline.py
+
+--- storage ---
+"""Storage engine for analytics events."""
+import json
+from pathlib import Path
+from typing import Dict, Any, List
+
+DATA_FILE = Path("/app/data/analytics_events.jsonl")
+
+def append_events(records: List[Dict[str, Any]], target_file: Path = DATA_FILE) -> int:
+    """Append a list of event dictionaries to the JSONL data file."""
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    count = 0
+    with open(target_file, "a", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+            count += 1
+    return count
+
+def read_all_events(target_file: Path = DATA_FILE) -> List[Dict[str, Any]]:
+    """Read all records from storage."""
+    if not target_file.exists():
+        return []
+    events = []
+    with open(target_file, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                events.append(json.loads(line))
+    return events
+
+--- models ---
+"""Data models for telemetry events."""
+from dataclasses import dataclass, asdict
+from typing import Optional, Dict, Any
+
+@dataclass
+class InboundEvent:
+    event_id: str
+    event_type: str
+    timestamp: str
+    session_id: str
+    client_context: Dict[str, Any]
+
+@dataclass
+class StoredAnalyticsEvent:
+    event_id: str
+    event_type: str
+    timestamp: str
+    session_id: str
+    user_agent: Optional[str] = None
+    viewport_width: Optional[int] = None
+    viewport_height: Optional[int] = None
+    locale: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+--- policy ---
+"""Data Governance and Telemetry Minimization Policy."""
+
+ALLOWED_TELEMETRY_FIELDS = {
+    "event_id",
+    "event_type",
+    "timestamp",
+    "session_id",
+    "user_agent",
+    "viewport_width",
+    "viewport_height",
+    "locale",
+}
+
+# Strict Compliance Notice:
+# Personal Identifiable Information (PII) including email addresses, phone numbers,
+# home addresses, and national identification numbers MUST NEVER be ingested, aggregated,
+# or written to persistent analytics storage.
+PROHIBITED_PII_FIELDS = {
+    "user_email",
+    "email",
+    "phone_number",
+    "phone",
+    "home_address",
+    "address",
+    "national_id",
+    "ssn",
+    "tax_id",
+}
+
+def is_field_allowed(field_name: str) -> bool:
+    """Return True if field is permitted under the data minimization policy."""
+    lower = field_name.lower()
+    if lower in PROHIBITED_PII_FIELDS:
+        return False
+    return lower in ALLOWED_TELEMETRY_FIELDS
+
+--- other files ---
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir pytest==8.3.3
+
+COPY . /app/
+
+RUN mkdir -p /app/data
+
+CMD ["/bin/bash"]
+total 0
+[?2004hroot@c874ab45e9f3:/app# for f in data/*; do if [ -f "$f" ]; then printf '\n--- %s ---\n' "$f"; head -c 6000 "$f"; printf '\n'; fi; done
+[?2004l[?2004hroot@c874ab45e9f3:/app# python3 - <<'PY'
+[?2004l[?2004h> from pathlib import Path
+[?2004l[?2004h> path = Path('pipeline/enricher.py')
+[?2004l[?2004h> text = path.read_text()
+[?2004l[?2004h> text = text.replace('from typing import Dict, Any, List\n', 'from typing import Dict, Any, List\n\nfrom pipeline.models import StoredAnalyticsEvent\n')
+[?2004l[?2004h> text = text.replace('    # TODO: Implement enrichment logic.\n    # Extract requested device and display attributes and return the enriched event record.\n    raise NotImplementedError("enrich_event is not implemented")', '''    client_context = raw_event.get("client_context") or {}
+[?2004l[?2004h>     return StoredAnalyticsEvent(
+[?2004l[?2004h>         event_id=raw_event["event_id"],
+[?2004l[?2004h>         event_type=raw_event["event_type"],
+[?2004l[?2004h>         timestamp=raw_event["timestamp"],
+[?2004l[?2004h>         session_id=raw_event["session_id"],
+[?2004l[?2004h>         user_agent=client_context.get("user_agent"),
+[?2004l[?2004h>         viewport_width=client_context.get("viewport_width"),
+[?2004l[?2004h>         viewport_height=client_context.get("viewport_height"),
+[?2004l[?2004h>         locale=client_context.get("locale"),
+[?2004l[?2004h>     ).to_dict()''')
+[?2004l[?2004h> path.write_text(text)
+[?2004l[?2004h> PY
+[?2004l[?2004hroot@c874ab45e9f3:/app# cat >> tests/test_pipeline.py <<'PY'
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.mark.parametrize("context", [
+[?2004l[?2004h>     {"user_agent": "Mobile Browser", "viewport_width": 390,
+[?2004l[?2004h>      "viewport_height": 844, "locale": "en-US"},
+[?2004l[?2004h>     {"viewport_width": 0, "locale": ""},
+[?2004l[?2004h>     {},
+[?2004l[?2004h>     None,
+[?2004l[?2004h> ])
+[?2004l[?2004h> def test_enrich_event_client_context(context):
+[?2004l[?2004h>     from copy import deepcopy
+[?2004l[?2004h>     from pipeline.enricher import enrich_event
+[?2004l[?2004h> 
+[?2004l[?2004h>     base = {"event_id": "e1", "event_type": "view",
+[?2004l[?2004h>             "timestamp": "2026-01-01T00:00:00Z", "session_id": "s1"}
+[?2004l[?2004h>     raw = {**base, "client_context": context, "user_email": "ignored@example.test"}
+[?2004l[?2004h>     if context is not None:
+[?2004l[?2004h>         raw["client_context"] = {**context, "phone_number": "not-for-storage"}
+[?2004l[?2004h>     original = deepcopy(raw)
+[?2004l[?2004h>     enriched = enrich_event(raw)
+[?2004l[?2004h>     expected = {**base, **{field: (context or {}).get(field) for field in (
+[?2004l[?2004h>         "user_agent", "viewport_width", "viewport_height", "locale"
+[?2004l[?2004h>     )}}
+[?2004l[?2004h>     assert enriched == expected
+[?2004l[?2004h>     assert raw == original
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> def test_enrich_event_without_client_context():
+[?2004l[?2004h>     from pipeline.enricher import enrich_batch, enrich_event
+[?2004l[?2004h> 
+[?2004l[?2004h>     raw = {"event_id": "e1", "event_type": "click",
+[?2004l[?2004h>            "timestamp": "2026-01-01T00:00:00Z", "session_id": "s1"}
+[?2004l[?2004h>     enriched = enrich_event(raw)
+[?2004l[?2004h>     assert all(enriched[field] is None for field in (
+[?2004l[?2004h>         "user_agent", "viewport_width", "viewport_height", "locale"
+[?2004l[?2004h>     ))
+[?2004l[?2004h>     assert enrich_batch([]) == []
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> def test_processor_persists_enriched_batch(tmp_path, monkeypatch):
+[?2004l[?2004h>     import json
+[?2004l[?2004h>     from pipeline import processor
+[?2004l[?2004h> 
+[?2004l[?2004h>     target = tmp_path / "analytics_events.jsonl"
+[?2004l[?2004h>     monkeypatch.setattr(processor, "append_events",
+[?2004l[?2004h>                         lambda records: append_events(records, target_file=target))
+[?2004l[?2004h>     base = {"event_type": "view", "timestamp": "2026-01-01T00:00:00Z",
+[?2004l[?2004h>             "session_id": "s1"}
+[?2004l[?2004h>     context = {"user_agent": "Desktop Browser", "viewport_width": 1440,
+[?2004l[?2004h>                "viewport_height": 900, "locale": "en-GB"}
+[?2004l[?2004h>     payload = {"events": [
+[?2004l[?2004h>         {**base, "event_id": "e1", "client_context": context},
+[?2004l[?2004h>         {**base, "event_id": "e2"},
+[?2004l[?2004h>     ]}
+[?2004l[?2004h>     assert processor.process_inbound_batch(payload) == 2
+[?2004l[?2004h>     lines = target.read_text().splitlines()
+[?2004l[?2004h>     assert len(lines) == 2
+[?2004l[?2004h>     assert json.loads(lines[0]) == {**base, "event_id": "e1", **context}
+[?2004l[?2004h>     assert json.loads(lines[1]) == {
+[?2004l[?2004h>         **base, "event_id": "e2", **dict.fromkeys(context)
+[?2004l[?2004h>     }
+[?2004l[?2004h>     assert processor.process_inbound_batch({"events": []}) == 0
+[?2004l[?2004h>     assert processor.process_inbound_batch({}) == 0
+[?2004l[?2004h>     assert len(target.read_text().splitlines()) == 2
+[?2004l[?2004h> PY
+[?2004l[?2004hroot@c874ab45e9f3:/app# python3 -m pytest -q
+[?2004l[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m                                                                                                                                                [100%][0m
+[32m[32m[1m9 passed[0m[32m in 0.02s[0m[0m
+[?2004hroot@c874ab45e9f3:/app# 

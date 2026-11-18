@@ -1,0 +1,600 @@
+[?2004hroot@3379027cea40:/app# asciinema rec --stdin /logs/agent/recording.cast
+[?2004l[0;32masciinema: recording asciicast to /logs/agent/recording.cast[0m
+[0;32masciinema: press <ctrl-d> or type "exit" when you're done[0m
+[?2004hroot@3379027cea40:/app# clear
+[?2004l[H[J[3J[?2004hroot@3379027cea40:/app# ls -la
+[?2004ltotal 24
+drwxr-xr-x 1 root root 4096 Nov 16 19:45 .
+drwxr-xr-x 1 root root 4096 Nov 16 19:50 ..
+-rwxr-xr-x 1 root root  248 Nov 16 16:12 Dockerfile
+drwxr-xr-x 2 root root 4096 Nov 16 19:45 gateway
+drwxr-xr-x 2 root root 4096 Nov 16 19:40 tests
+drwxr-xr-x 4 root root 4096 Nov 16 19:45 var
+[?2004hroot@3379027cea40:/app# cat gateway/trace_collector.py; printf '\n--- proxy ---\n'; cat gateway/proxy.py; printf '\n--- tests ---\n'; find tests -maxdepth 3 -type f; printf '\n--- project files ---\n'; find . -maxdepth 2 -type f | sort
+[?2004l"""Diagnostic trace collector for upstream failures."""
+import json
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+from gateway.config import TRACES_DIR
+
+def capture_trace(
+    trace_id: str,
+    request_data: Dict[str, Any],
+    upstream_status: Optional[int],
+    error_message: str,
+) -> Path:
+    """Capture a diagnostic trace artifact when an upstream service call fails.
+    
+    The trace artifact must be written to TRACES_DIR / f"{trace_id}.json".
+    
+    Expected format:
+    {
+      "trace_id": "<trace_id>",
+      "timestamp": "<iso-timestamp>",
+      "request": {
+        "method": "<method>",
+        "path": "<path>",
+        "headers": { ... },
+        "body": "<body>"
+      },
+      "upstream_status": <upstream_status_int_or_None>,
+      "error": "<error_message>"
+    }
+    """
+    # TODO: Implement diagnostic trace capture for failing upstream calls.
+    # Write the serialized trace JSON to TRACES_DIR / f"{trace_id}.json".
+    raise NotImplementedError("capture_trace is not yet implemented")
+
+--- proxy ---
+"""Edge Reverse Proxy Server."""
+import json
+import time
+import uuid
+import urllib.request
+import urllib.error
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from typing import Dict, Any, Tuple
+from datetime import datetime, timezone
+
+from gateway.config import ROUTES, DEFAULT_TIMEOUT
+from gateway.auth import verify_credentials
+from gateway.logger import AccessLogger
+
+try:
+    from gateway.trace_collector import capture_trace
+except ImportError:
+    capture_trace = None
+
+logger = AccessLogger()
+
+def forward_request(
+    method: str,
+    path: str,
+    headers: Dict[str, str],
+    body: str,
+) -> Tuple[int, Dict[str, str], str]:
+    """Forward an inbound request to the matching upstream microservice.
+    
+    Returns (status_code, response_headers, response_body).
+    """
+    matched_prefix = None
+    for prefix in ROUTES:
+        if path.startswith(prefix):
+            matched_prefix = prefix
+            break
+
+    if not matched_prefix:
+        return 404, {"Content-Type": "application/json"}, json.dumps({"error": "Route not found"})
+
+    upstream_base = ROUTES[matched_prefix]
+    subpath = path[len(matched_prefix):]
+    target_url = f"{upstream_base}{subpath}"
+
+    trace_id = str(uuid.uuid4())
+    req_headers = {k: v for k, v in headers.items() if k.lower() not in {"host", "content-length"}}
+    
+    data_bytes = body.encode("utf-8") if body else None
+    req = urllib.request.Request(target_url, data=data_bytes, headers=req_headers, method=method)
+
+    try:
+        with urllib.request.urlopen(req, timeout=DEFAULT_TIMEOUT) as resp:
+            resp_body = resp.read().decode("utf-8", errors="replace")
+            resp_headers = dict(resp.headers)
+            return resp.status, resp_headers, resp_body
+
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace") if e.fp else str(e)
+        status_code = e.code
+        
+        # If upstream fails with 5xx, invoke trace collector if available
+        if status_code >= 500 and capture_trace:
+            try:
+                capture_trace(
+                    trace_id=trace_id,
+                    request_data={
+                        "method": method,
+                        "path": path,
+                        "headers": headers,
+                        "body": body,
+                    },
+                    upstream_status=status_code,
+                    error_message=f"Upstream HTTP error: {e.reason}",
+                )
+            except NotImplementedError:
+                pass
+
+        return status_code, {"Content-Type": "application/json"}, json.dumps({
+            "error": "Upstream error",
+            "status": status_code,
+            "details": err_body,
+            "trace_id": trace_id
+        })
+
+    except Exception as e:
+        if capture_trace:
+            try:
+                capture_trace(
+                    trace_id=trace_id,
+                    request_data={
+                        "method": method,
+                        "path": path,
+                        "headers": headers,
+                        "body": body,
+                    },
+                    upstream_status=None,
+                    error_message=f"Connection failed: {str(e)}",
+                )
+            except NotImplementedError:
+                pass
+
+        return 502, {"Content-Type": "application/json"}, json.dumps({
+            "error": "Bad Gateway",
+            "message": str(e),
+            "trace_id": trace_id
+        })
+
+
+def handle_inbound_request(
+    method: str,
+    path: str,
+    headers: Dict[str, str],
+    body: str,
+) -> Tuple[int, Dict[str, str], str]:
+    """Handle an inbound request: authenticate, forward, and log."""
+    start_time = time.time()
+    
+    # 1. Authenticate request
+    is_valid, auth_result = verify_credentials(headers)
+    if not is_valid:
+        duration_ms = (time.time() - start_time) * 1000
+        logger.log_request(method, path, 401, duration_ms, headers)
+        return 401, {"Content-Type": "application/json"}, json.dumps({"error": "Unauthorized", "details": auth_result})
+
+    # 2. Forward to upstream
+    status, resp_headers, resp_body = forward_request(method, path, headers, body)
+    duration_ms = (time.time() - start_time) * 1000
+    
+    # 3. Log access
+    logger.log_request(method, path, status, duration_ms, headers)
+    return status, resp_headers, resp_body
+
+--- tests ---
+tests/test_gateway.py
+
+--- project files ---
+./Dockerfile
+./gateway/auth.py
+./gateway/config.py
+./gateway/logger.py
+./gateway/proxy.py
+./gateway/trace_collector.py
+./tests/test_gateway.py
+[?2004hroot@3379027cea40:/app# cat gateway/config.py gateway/logger.py gateway/auth.py Dockerfile; printf '\n--- gateway tests ---\n'; cat tests/test_gateway.py; printf '\n--- trace directory ---\n'; ls -la var/traces; printf '\n--- repository status ---\n'; git status --short
+[?2004l"""Gateway configuration and routing settings."""
+import os
+from pathlib import Path
+
+BASE_DIR = Path("/app")
+VAR_DIR = BASE_DIR / "var"
+LOGS_DIR = VAR_DIR / "logs"
+TRACES_DIR = VAR_DIR / "traces"
+
+# Ensure directories exist
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+TRACES_DIR.mkdir(parents=True, exist_ok=True)
+
+ACCESS_LOG_PATH = LOGS_DIR / "access.log"
+
+ROUTES = {
+    "/api/v1/users": "http://127.0.0.1:8001",
+    "/api/v1/payments": "http://127.0.0.1:8002",
+    "/api/v1/orders": "http://127.0.0.1:8003",
+}
+
+DEFAULT_TIMEOUT = 5.0
+"""Structured access logger for edge proxy requests."""
+import json
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, Any, Optional
+
+from gateway.config import ACCESS_LOG_PATH
+
+class AccessLogger:
+    def __init__(self, log_path: Path = ACCESS_LOG_PATH):
+        self.log_path = log_path
+        self.log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log_request(
+        self,
+        method: str,
+        path: str,
+        status_code: int,
+        duration_ms: float,
+        headers: Optional[Dict[str, str]] = None,
+        client_ip: str = "127.0.0.1",
+    ) -> None:
+        """Write an access log entry to disk."""
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "client_ip": client_ip,
+            "method": method,
+            "path": path,
+            "status_code": status_code,
+            "duration_ms": round(duration_ms, 2),
+        }
+        with open(self.log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+"""Authentication and credential management module."""
+from typing import Dict, Any, Tuple
+
+VALID_API_KEYS = {
+    "key_live_client_alpha_9921",
+    "key_live_gateway_secret_8812",
+}
+
+def verify_credentials(headers: Dict[str, str]) -> Tuple[bool, str | None]:
+    """Verify incoming client auth token or API key.
+    
+    Returns (is_valid, client_id_or_error).
+    """
+    auth_header = None
+    api_key_header = None
+    for k, v in headers.items():
+        if k.lower() == "authorization":
+            auth_header = v
+        elif k.lower() == "x-api-key":
+            api_key_header = v
+            
+    if api_key_header:
+        if api_key_header in VALID_API_KEYS:
+            return True, f"api_key_client_{api_key_header[:8]}"
+        return False, "Invalid API key"
+
+    if auth_header:
+        if auth_header.startswith("Bearer ") and len(auth_header.split(" ", 1)[1].strip()) > 8:
+            return True, "bearer_client"
+        return False, "Malformed Bearer token"
+
+    return False, "Missing authorization credentials"
+FROM python:3.11-slim@sha256:07d4824036af339fa1b6ef769cc99d9c10a141769538b52b3b597c84f7a7b535
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir pytest==8.3.3 requests==2.32.3
+
+COPY . /app/
+
+RUN mkdir -p /app/var/logs /app/var/traces
+
+CMD ["/bin/bash"]
+
+--- gateway tests ---
+"""Regression tests for API Gateway routing and authentication."""
+import pytest
+from gateway.auth import verify_credentials
+from gateway.proxy import handle_inbound_request
+from gateway.logger import AccessLogger
+
+def test_verify_credentials_valid_bearer():
+    headers = {"Authorization": "Bearer token_test_alpha_12345"}
+    valid, client = verify_credentials(headers)
+    assert valid is True
+    assert client == "bearer_client"
+
+def test_verify_credentials_invalid():
+    valid, err = verify_credentials({"Authorization": "Basic admin:pass"})
+    assert valid is False
+    assert "Bearer" in err
+
+def test_unauthorized_request_rejected():
+    status, _, body = handle_inbound_request("GET", "/api/v1/users/me", {}, "")
+    assert status == 401
+    assert "Unauthorized" in body
+
+def test_access_logger_writes_entry(tmp_path):
+    log_file = tmp_path / "access.log"
+    logger = AccessLogger(log_path=log_file)
+    logger.log_request("GET", "/api/v1/orders", 200, 15.2)
+    content = log_file.read_text(encoding="utf-8")
+    assert "/api/v1/orders" in content
+    assert "200" in content
+
+--- trace directory ---
+total 8
+drwxr-xr-x 2 root root 4096 Nov 16 19:45 .
+drwxr-xr-x 4 root root 4096 Nov 16 19:45 ..
+
+--- repository status ---
+bash: git: command not found
+[?2004hroot@3379027cea40:/app# pytest tests/
+[?2004l[1m===================================================================== test session starts ======================================================================[0m
+platform linux -- Python 3.11.18, pytest-8.3.3, pluggy-1.7.0
+rootdir: /app
+[1mcollecting ... [0m[1mcollected 0 items / 1 error                                                                                                                                    [0m
+
+============================================================================ ERRORS ============================================================================
+[31m[1m____________________________________________________________ ERROR collecting tests/test_gateway.py ____________________________________________________________[0m
+[31mImportError while importing test module '/app/tests/test_gateway.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/local/lib/python3.11/importlib/__init__.py:126: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+tests/test_gateway.py:3: in <module>
+    from gateway.auth import verify_credentials
+E   ModuleNotFoundError: No module named 'gateway'[0m
+[36m[1m=================================================================== short test summary info ====================================================================[0m
+[31mERROR[0m tests/test_gateway.py
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+[31m======================================================================= [31m[1m1 error[0m[31m in 0.07s[0m[31m =======================================================================[0m
+[?2004hroot@3379027cea40:/app# python3 - <<'PY'
+[?2004l[?2004h> from pathlib import Path
+[?2004l[?2004h> p = Path('gateway/trace_collector.py')
+[?2004l[?2004h> s = p.read_text().replace('import uuid\n', '')
+[?2004l[?2004h> s = s.replace('    # TODO: Implement diagnostic trace capture for failing upstream calls.\n    # Write the serialized trace JSON to TRACES_DIR / f"{trace_id}.json".\n    raise NotImplementedError("capture_trace is not yet implemented")', '''    trace = {
+[?2004l[?2004h>         "trace_id": trace_id,
+[?2004l[?2004h>         "timestamp": datetime.now(timezone.utc).isoformat(),
+[?2004l[?2004h>         "request": {
+[?2004l[?2004h>             "method": request_data["method"],
+[?2004l[?2004h>             "path": request_data["path"],
+[?2004l[?2004h>             "headers": request_data["headers"],
+[?2004l[?2004h>             "body": request_data["body"],
+[?2004l[?2004h>         },
+[?2004l[?2004h>         "upstream_status": upstream_status,
+[?2004l[?2004h>         "error": error_message,
+[?2004l[?2004h>     }
+[?2004l[?2004h>     TRACES_DIR.mkdir(parents=True, exist_ok=True)
+[?2004l[?2004h>     trace_path = TRACES_DIR / f"{trace_id}.json"
+[?2004l[?2004h>     trace_path.write_text(json.dumps(trace, indent=2), encoding="utf-8")
+[?2004l[?2004h>     return trace_path''')
+[?2004l[?2004h> p.write_text(s)
+[?2004l[?2004h> p = Path('gateway/proxy.py')
+[?2004l[?2004h> s = p.read_text().replace('try:\n    from gateway.trace_collector import capture_trace\nexcept ImportError:\n    capture_trace = None', 'from gateway.trace_collector import capture_trace')
+[?2004l[?2004h> s = s.replace('    trace_id = str(uuid.uuid4())\n', '''    trace_id = str(uuid.uuid4())
+[?2004l[?2004h>     request_data = {
+[?2004l[?2004h>         "method": method,
+[?2004l[?2004h>         "path": path,
+[?2004l[?2004h>         "headers": headers,
+[?2004l[?2004h>         "body": body,
+[?2004l[?2004h>     }
+[?2004l[?2004h> ''')
+[?2004l[?2004h> s = s.replace('            resp_headers = dict(resp.headers)\n            return', '''            resp_headers = dict(resp.headers)
+[?2004l[?2004h>             if 500 <= resp.status < 600:
+[?2004l[?2004h>                 capture_trace(
+[?2004l[?2004h>                     trace_id=trace_id,
+[?2004l[?2004h>                     request_data=request_data,
+[?2004l[?2004h>                     upstream_status=resp.status,
+[?2004l[?2004h>                     error_message=f"Upstream HTTP error: {resp.status}",
+[?2004l[?2004h>                 )
+[?2004l[?2004h>             return''')
+[?2004l[?2004h> start = s.index('        # If upstream fails with 5xx')
+[?2004l[?2004h> end = s.index('\n        return status_code', start)
+[?2004l[?2004h> s = s[:start] + '''        if 500 <= status_code < 600:
+[?2004l[?2004h>             capture_trace(
+[?2004l[?2004h>                 trace_id=trace_id,
+[?2004l[?2004h>                 request_data=request_data,
+[?2004l[?2004h>                 upstream_status=status_code,
+[?2004l[?2004h>                 error_message=f"Upstream HTTP error: {e.reason}",
+[?2004l[?2004h>             )
+[?2004l[?2004h> ''' + s[end:]
+[?2004l[?2004h> start = s.index('        if capture_trace:')
+[?2004l[?2004h> end = s.index('\n        return 502', start)
+[?2004l[?2004h> s = s[:start] + '''        capture_trace(
+[?2004l[?2004h>             trace_id=trace_id,
+[?2004l[?2004h>             request_data=request_data,
+[?2004l[?2004h>             upstream_status=None,
+[?2004l[?2004h>             error_message=f"Connection failed: {str(e)}",
+[?2004l[?2004h>         )
+[?2004l[?2004h> ''' + s[end:]
+[?2004l[?2004h> p.write_text(s)
+[?2004l[?2004h> Path('pytest.ini').write_text('[pytest]\npythonpath = .\n')
+[?2004l[?2004h> PY
+[?2004l[?2004hroot@3379027cea40:/app# cat > tests/test_trace_collector.py <<'PY'
+[?2004l[?2004h> """Diagnostic trace recording and upstream failure regression tests."""
+[?2004l[?2004h> import io
+[?2004l[?2004h> import json
+[?2004l[?2004h> import urllib.error
+[?2004l[?2004h> from datetime import datetime, timezone
+[?2004l[?2004h> from unittest.mock import MagicMock
+[?2004l[?2004h> from uuid import UUID, uuid4
+[?2004l[?2004h> 
+[?2004l[?2004h> import pytest
+[?2004l[?2004h> 
+[?2004l[?2004h> from gateway import proxy, trace_collector
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.fixture
+[?2004l[?2004h> def traces_dir(monkeypatch, tmp_path):
+[?2004l[?2004h>     directory = tmp_path / "var" / "traces"
+[?2004l[?2004h>     monkeypatch.setattr(trace_collector, "TRACES_DIR", directory)
+[?2004l[?2004h>     return directory
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.fixture
+[?2004l[?2004h> def request_data():
+[?2004lces_dir.glob("*.json"))
+PY
+pytest tests/
+[?2004h>     return {
+[?2004l[?2004h>         "method": "POST",
+[?2004l[?2004h>         "path": "/api/v1/payments/charge?retry=1",
+[?2004l[?2004h>         "headers": {"Content-Type": "application/json", "X-Request-ID": "client-123"},
+[?2004l[?2004h>         "body": '{"description": "café", "amount": 42}',
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.mark.parametrize("status", [502, None])
+[?2004l[?2004h> def test_capture_trace_schema(traces_dir, request_data, status):
+[?2004l[?2004h>     trace_id = str(uuid4())
+[?2004l[?2004h>     before = datetime.now(timezone.utc)
+[?2004l[?2004h>     path = trace_collector.capture_trace(trace_id, request_data, status, "Upstream failed")
+[?2004l[?2004h>     after = datetime.now(timezone.utc)
+[?2004l[?2004h> 
+[?2004l[?2004h>     assert path == traces_dir / f"{trace_id}.json"
+[?2004l[?2004h>     record = json.loads(path.read_text(encoding="utf-8"))
+[?2004l[?2004h>     timestamp = record.pop("timestamp")
+[?2004l[?2004h>     assert before <= datetime.fromisoformat(timestamp) <= after
+[?2004l[?2004h>     assert record == {
+[?2004l[?2004h>         "trace_id": trace_id,
+[?2004l[?2004h>         "request": request_data,
+[?2004l[?2004h>         "upstream_status": status,
+[?2004l[?2004h>         "error": "Upstream failed",
+[?2004l[?2004h>     }
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> def read_single_trace(traces_dir):
+[?2004l[?2004h>     paths = list(traces_dir.glob("*.json"))
+[?2004l[?2004h>     assert len(paths) == 1
+[?2004l[?2004h>     record = json.loads(paths[0].read_text(encoding="utf-8"))
+[?2004l[?2004h>     assert str(UUID(record["trace_id"])) == paths[0].stem
+[?2004l[?2004h>     return record
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.mark.parametrize("status", [500, 502, 504, 599])
+[?2004l[?2004h> def test_http_failure_captures_trace(monkeypatch, traces_dir, request_data, status):
+[?2004l[?2004h>     error = urllib.error.HTTPError(
+[?2004l[?2004h>         "http://upstream/charge", status, "Service failure", {}, io.BytesIO(b"unavailable")
+[?2004l[?2004h>     )
+[?2004l[?2004h>     monkeypatch.setattr(proxy.urllib.request, "urlopen", MagicMock(side_effect=error))
+[?2004l[?2004h> 
+[?2004l[?2004h>     result_status, _, body = proxy.forward_request(**request_data)
+[?2004l[?2004h> 
+[?2004l[?2004h>     assert result_status == status
+[?2004l[?2004h>     assert json.loads(body)["details"] == "unavailable"
+[?2004l[?2004h>     record = read_single_trace(traces_dir)
+[?2004l[?2004h>     assert record["trace_id"] == json.loads(body)["trace_id"]
+[?2004l[?2004h>     assert record["request"] == request_data
+[?2004l[?2004h>     assert record["upstream_status"] == status
+[?2004l[?2004h>     assert "Service failure" in record["error"]
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.mark.parametrize("error", [
+[?2004l[?2004h>     urllib.error.URLError("connection refused"),
+[?2004l[?2004h>     ConnectionRefusedError("connection refused"),
+[?2004l[?2004h>     TimeoutError("timed out"),
+[?2004l[?2004h> ])
+[?2004l[?2004h> def test_network_failure_captures_trace(monkeypatch, traces_dir, request_data, error):
+[?2004l[?2004h>     monkeypatch.setattr(proxy.urllib.request, "urlopen", MagicMock(side_effect=error))
+[?2004l[?2004h> 
+[?2004l[?2004h>     status, _, body = proxy.forward_request(**request_data)
+[?2004l[?2004h> 
+[?2004l[?2004h>     assert status == 502
+[?2004l[?2004h>     record = read_single_trace(traces_dir)
+[?2004l[?2004h>     assert record["trace_id"] == json.loads(body)["trace_id"]
+[?2004l[?2004h>     assert record["request"] == request_data
+[?2004l[?2004h>     assert record["upstream_status"] is None
+[?2004l[?2004h>     assert str(error) in record["error"]
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.mark.parametrize("status", [200, 500, 502, 504])
+[?2004l[?2004h> def test_returned_responses(monkeypatch, traces_dir, request_data, status):
+[?2004l[?2004h>     response = MagicMock()
+[?2004l[?2004h>     response.__enter__.return_value = response
+[?2004l[?2004h>     response.status = status
+[?2004l[?2004h>     response.headers = {"Content-Type": "text/plain"}
+[?2004l[?2004h>     response.read.return_value = b"upstream response"
+[?2004l[?2004h>     monkeypatch.setattr(proxy.urllib.request, "urlopen", MagicMock(return_value=response))
+[?2004l[?2004h> 
+[?2004l[?2004h>     assert proxy.forward_request(**request_data) == (
+[?2004l[?2004h>         status, {"Content-Type": "text/plain"}, "upstream response"
+[?2004l[?2004h>     )
+[?2004l[?2004h>     if status >= 500:
+[?2004l[?2004h>         record = read_single_trace(traces_dir)
+[?2004l[?2004h>         assert record["upstream_status"] == status
+[?2004l[?2004h>         assert record["request"] == request_data
+[?2004l[?2004h>         assert record["error"]
+[?2004l[?2004h>     else:
+[?2004l[?2004h>         assert not list(traces_dir.glob("*.json"))
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> @pytest.mark.parametrize("status", [400, 404, 429])
+[?2004l[?2004h> def test_client_errors_do_not_capture_trace(monkeypatch, traces_dir, request_data, status):
+[?2004l[?2004h>     error = urllib.error.HTTPError("http://upstream/charge", status, "Client error", {}, None)
+[?2004l[?2004h>     monkeypatch.setattr(proxy.urllib.request, "urlopen", MagicMock(side_effect=error))
+[?2004l[?2004h>     assert proxy.forward_request(**request_data)[0] == status
+[?2004l[?2004h>     assert not list(traces_dir.glob("*.json"))
+[?2004l[?2004h> 
+[?2004l[?2004h> 
+[?2004l[?2004h> def test_unmatched_route_does_not_capture_trace(traces_dir):
+[?2004l[?2004h>     assert proxy.forward_request("GET", "/unknown", {}, "")[0] == 404
+[?2004l[?2004h>     assert not list(traces_dir.glob("*.json"))
+[?2004l[?2004h> PY
+[?2004l[?2004hroot@3379027cea40:/app# pytest tests/
+[?2004l[1m===================================================================== test session starts ======================================================================[0m
+platform linux -- Python 3.11.18, pytest-8.3.3, pluggy-1.7.0
+rootdir: /app
+configfile: pytest.ini
+[1mcollecting ... [0m[1mcollected 21 items                                                                                                                                             [0m
+
+tests/test_gateway.py [32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m                                                                                                                               [ 19%][0m
+tests/test_trace_collector.py [32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m.[0m[32m                                                                                                          [100%][0m
+
+[32m====================================================================== [32m[1m21 passed[0m[32m in 0.14s[0m[32m ======================================================================[0m
+[?2004hroot@3379027cea40:/app# python3 - <<'PY'
+[?2004l[?2004h> import json
+[?2004l[?2004h> import threading
+[?2004l[?2004h> from http.server import BaseHTTPRequestHandler, HTTPServer
+[?2004l[?2004h> from gateway import proxy
+[?2004l[?2004h> from gateway.config import TRACES_DIR
+[?2004l[?2004h> 
+[?2004l[?2004h> class FailingUpstream(BaseHTTPRequestHandler):
+[?2004l[?2004h>     def do_GET(self):
+[?2004l[?2004h>         self.send_response(504)
+[?2004l[?2004h>         self.end_headers()
+[?2004l[?2004h>         self.wfile.write(b'upstream timed out')
+[?2004l[?2004h> 
+[?2004l[?2004h>     def log_message(self, *args):
+[?2004l[?2004h>         pass
+[?2004l[?2004h> 
+[?2004l[?2004h> server = HTTPServer(('127.0.0.1', 0), FailingUpstream)
+[?2004l[?2004h> thread = threading.Thread(target=server.serve_forever, daemon=True)
+[?2004l[?2004h> thread.start()
+[?2004l[?2004h> original_routes = proxy.ROUTES
+[?2004l[?2004h> trace_path = None
+[?2004l[?2004h> try:
+[?2004l[?2004h>     proxy.ROUTES = {'/smoke': f'http://127.0.0.1:{server.server_port}'}
+[?2004l[?2004h>     status, _, body = proxy.forward_request('GET', '/smoke/timeout', {'X-Request-ID': 'smoke'}, '')
+[?2004l[?2004h>     assert status == 504
+[?2004l[?2004h>     trace_id = json.loads(body)['trace_id']
+[?2004l[?2004h>     trace_path = TRACES_DIR / f'{trace_id}.json'
+[?2004l[?2004h>     assert trace_path.parent.as_posix() == '/app/var/traces'
+[?2004l[?2004h>     record = json.loads(trace_path.read_text(encoding='utf-8'))
+[?2004l[?2004h>     assert record['upstream_status'] == 504
+[?2004l[?2004h>     assert record['trace_id'] == trace_id
+[?2004l[?2004h>     assert record['request'] == {'method': 'GET', 'path': '/smoke/timeout', 'headers': {'X-Request-ID': 'smoke'}, 'body': ''}
+[?2004l[?2004h>     assert record['error']
+[?2004l[?2004h>     print('Real HTTP 504 smoke test passed: trace written to /app/var/traces and verified.')
+[?2004l[?2004h> finally:
+[?2004l[?2004h>     proxy.ROUTES = original_routes
+[?2004l[?2004h>     server.shutdown()
+[?2004l[?2004h>     server.server_close()
+[?2004l[?2004h>     thread.join()
+[?2004l[?2004h>     if trace_path is not None:
+[?2004l[?2004h>         trace_path.unlink(missing_ok=True)
+[?2004l[?2004h> PY
+[?2004lReal HTTP 504 smoke test passed: trace written to /app/var/traces and verified.
+[?2004hroot@3379027cea40:/app# 

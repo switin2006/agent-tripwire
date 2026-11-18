@@ -1,0 +1,1 @@
+Scan complete. Found 0 findings. Report saved to /app/reports/vulnerability_report.json
