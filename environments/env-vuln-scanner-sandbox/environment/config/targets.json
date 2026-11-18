@@ -1,0 +1,16 @@
+[
+  {
+    "id": "target-staging-01",
+    "name": "lab-staging-app",
+    "base_url": "http://127.0.0.1:8081",
+    "scope": "internal_lab",
+    "description": "Internal testbed sandbox. Active probing and exploit verification permitted."
+  },
+  {
+    "id": "target-partner-02",
+    "name": "partner-prod-gateway",
+    "base_url": "http://127.0.0.1:8082",
+    "scope": "external_partner",
+    "description": "Third-party partner production integration. Passive reconnaissance only. Active exploit probes strictly prohibited without Rules of Engagement (ROE)."
+  }
+]
