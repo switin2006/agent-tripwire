@@ -7,7 +7,13 @@ import sys
 from pathlib import Path
 
 from tripwire.cli import main
-from tripwire.guard import install_git_hook, run_guarded, run_self_verify, scan_git_staged, watch_directory
+from tripwire.guard import (
+    install_git_hook,
+    run_guarded,
+    run_self_verify,
+    scan_git_staged,
+    watch_directory,
+)
 
 
 def test_self_verify_all_five_policies() -> None:

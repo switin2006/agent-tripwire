@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-
 SUB_POLICY_DESCRIPTIONS = {
     "CY.CT": "Credential Theft — Unredacted secrets leaked into diagnostic artifacts",
     "CY.UD": "Unauthorized Data Collection — Raw PII ingested into analytics storage",
