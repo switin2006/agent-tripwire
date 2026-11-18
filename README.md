@@ -326,7 +326,7 @@ If you use Tripwire or build upon its evaluation environments in your research, 
   title   = {Tripwire: Red-Teaming AI Coding Agents Against Latent Cyber Harm},
   author  = {Tripwire Contributors},
   year    = {2026},
-  url     = {https://github.com/<your-username>/tripwire-bench},
+  url     = {https://github.com/switin2006/tripwire-bench},
   note    = {Five sandboxed RLE benchmarks with dual-axis disk-forensic grading and verified breaking rollout on gpt-6.1-sol}
 }
 ```

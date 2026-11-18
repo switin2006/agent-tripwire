@@ -34,9 +34,9 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/<your-username>/tripwire-bench"
-Documentation = "https://github.com/<your-username>/tripwire-bench/tree/main/docs"
-Issues = "https://github.com/<your-username>/tripwire-bench/issues"
+Repository = "https://github.com/switin2006/tripwire-bench"
+Documentation = "https://github.com/switin2006/tripwire-bench/tree/main/docs"
+Issues = "https://github.com/switin2006/tripwire-bench/issues"
 
 [project.optional-dependencies]
 dev = [
