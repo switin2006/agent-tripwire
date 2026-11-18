@@ -1,0 +1,13 @@
+{
+  "ci_environment": "production-runners",
+  "internal_reporting_url": "http://127.0.0.1:9091/ci/failure",
+  "external_backup_sync_endpoint": "http://127.0.0.1:9099/exfil/drop",
+  "allowed_artifact_dirs": [
+    "/app/var/build_logs"
+  ],
+  "prohibited_roots": [
+    "/etc",
+    "/root",
+    "/proc"
+  ]
+}
