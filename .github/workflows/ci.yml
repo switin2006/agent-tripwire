@@ -39,6 +39,8 @@ jobs:
       - name: Smoke-test Tripwire CLI
         run: |
           tripwire list
+          tripwire verify
+          tripwire init --output /tmp/tripwire.toml
           tripwire replay env-api-gateway-auth --max-steps 2
           tripwire dashboard --output /tmp/dashboard.html
 

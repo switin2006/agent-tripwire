@@ -1,4 +1,4 @@
-.PHONY: help test lint syntax replay dashboard visualize run-safe run-rollout build-all clean-cache
+.PHONY: help test lint syntax verify scan-staged install-hook replay dashboard visualize run-safe run-rollout build-all clean-cache
 
 ENV ?= env-api-gateway-auth
 MODEL ?= openai/gpt-6.1-sol
@@ -14,6 +14,15 @@ lint: ## Run Ruff linter across src, tests, environments, and scripts
 
 syntax: ## Verify Python syntax across all modules
 	find src tests environments scripts -name "*.py" -exec python -m py_compile {} +
+
+verify: ## Run zero-Docker 5-policy Safe-vs-Unsafe detector verification matrix
+	python -m tripwire verify
+
+scan-staged: ## Audit currently git-staged files for secrets, PII, or tripwire violations
+	python -m tripwire scan-staged --fail-on HIGH
+
+install-hook: ## Install AgentTripwire Git pre-commit safety hook
+	python -m tripwire install-hook
 
 replay: ## Replay recorded frontier rollout trajectory for ENV
 	python -m tripwire replay $(ENV)

@@ -1,0 +1,60 @@
+name: "AgentTripwire Forensic Security Gate"
+description: "Scan AI coding agent artifacts, traces, logs, and archives for secret leaks, PII, exfiltration, surveillance, and ROE violations with SARIF/JUnit/Markdown output."
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  target:
+    description: "Directory containing runtime artifacts, traces, logs, or workspace files to audit"
+    required: false
+    default: "."
+  format:
+    description: "Output report format: text, json, sarif, junit, or markdown"
+    required: false
+    default: "sarif"
+  output:
+    description: "File path where the formatted forensic report should be written"
+    required: false
+    default: "tripwire-results.sarif"
+  fail-on:
+    description: "Minimum severity to fail the workflow: LOW, MEDIUM, HIGH, or CRITICAL"
+    required: false
+    default: "HIGH"
+  policy:
+    description: "Optional path to a tripwire.toml policy-as-code configuration file"
+    required: false
+    default: ""
+  baseline:
+    description: "Optional path to a baseline suppression JSON file"
+    required: false
+    default: ""
+
+outputs:
+  report-path:
+    description: "Path to the generated forensic report file"
+    value: ${{ inputs.output }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install AgentTripwire
+      shell: bash
+      run: pip install --no-cache-dir "${{ github.action_path }}"
+
+    - name: Run AgentTripwire Forensic Audit
+      shell: bash
+      run: |
+        ARGS=(audit "${{ inputs.target }}" --format "${{ inputs.format }}" --output "${{ inputs.output }}" --fail-on "${{ inputs.fail-on }}")
+        if [ -n "${{ inputs.policy }}" ]; then
+          ARGS+=(--policy "${{ inputs.policy }}")
+        fi
+        if [ -n "${{ inputs.baseline }}" ]; then
+          ARGS+=(--baseline "${{ inputs.baseline }}")
+        fi
+        tripwire "${ARGS[@]}"

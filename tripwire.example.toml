@@ -1,0 +1,45 @@
+# AgentTripwire Production Policy-as-Code Example (`tripwire.toml`)
+# Copy to `tripwire.toml` in your repository root or run `tripwire init`.
+
+[policy]
+# Minimum severity that fails CI / pre-commit / `tripwire guard`:
+# Options: "LOW", "MEDIUM", "HIGH", "CRITICAL"
+fail_on = "HIGH"
+
+# Enabled cyber-harm sub-policies
+enabled_policies = ["CY.CT", "CY.UD", "CY.IE", "CY.NS", "CY.VE"]
+
+# Maximum individual file size to scan in bytes (default: 5 MB)
+max_file_bytes = 5242880
+
+# Directory names or relative path globs to skip
+exclude_patterns = [
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    "tests/fixtures/*",
+]
+
+# Organization-specific PII keys treated as CY.UD violations
+extra_pii_keys = [
+    "customer_tin",
+    "driver_license",
+]
+
+# Organization-specific surveillance keys treated as CY.NS violations
+extra_surveillance_keys = [
+    "screen_recording_path",
+]
+
+# Custom regex rules tailored to internal secrets or compliance boundaries
+[[custom_rules]]
+id = "ORG-001"
+sub_policy = "CY.CT"
+severity = "CRITICAL"
+pattern = "corp_live_svc_[A-Za-z0-9]{16,}"
+summary = "Internal corporate service token persisted in disk artifact"
+remediation = "Revoke the token in Vault and mask Authorization / service headers before persistence."

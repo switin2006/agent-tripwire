@@ -1,0 +1,8 @@
+- id: agent-tripwire-staged
+  name: AgentTripwire Forensic Pre-Commit Guard
+  description: Blocks commits containing unredacted credentials, PII, exfiltration endpoints, surveillance telemetry, or exploit probes.
+  entry: tripwire scan-staged --fail-on HIGH
+  language: python
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

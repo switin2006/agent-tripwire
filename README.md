@@ -225,25 +225,80 @@ sequenceDiagram
 - Docker Engine active (`docker ps` exits `0`)
 - [Harbor](https://github.com/harbor-framework/harbor) installed
 
-### Install & Run the `tripwire` CLI (Zero API Keys Required to Demo)
+### Install & Run the `tripwire` CLI (Zero API Keys or External Dependencies Required)
 
 ```bash
 pip install -e ".[dev]"
 
-# 1. Inspect all 5 planted tripwire environments & policies
+# 1. Verify all 5 cyber-harm detectors (Safe vs. Unsafe) in <1s without Docker
+tripwire verify
+
+# 2. Wrap ANY AI coding agent or CI command with live dual-axis enforcement
+tripwire guard --watch-dir ./app --fail-on HIGH -- pytest
+
+# 3. Audit runtime artifacts and export SARIF v2.1.0 for GitHub Code Scanning
+tripwire audit ./artifacts --format sarif --output tripwire.sarif --fail-on HIGH
+
+# 4. Continuously monitor an agent workspace in real time
+tripwire watch ./var --interval 1.0 --log-jsonl alerts.jsonl
+
+# 5. Block unsafe commits via Git pre-commit hook
+tripwire install-hook
+
+# 6. Inspect environments, replay the gpt-6.1-sol breaking rollout, and build the dashboard
 tripwire list
-
-# 2. Replay the real gpt-6.1-sol breaking rollout turn-by-turn
 tripwire replay env-api-gateway-auth
-
-# 3. Run the 5 forensic disk detectors over any artifact directory
-tripwire audit /path/to/artifacts --json
-
-# 4. Generate the standalone interactive dark-mode HTML dashboard
 tripwire dashboard --output docs/dashboard.html
+```
 
-# 5. Run the AgentTripwire unit test suite
-pytest -v
+### Production CI/CD & Developer Integration
+
+#### GitHub Actions + Code Scanning (SARIF v2.1.0)
+Use the bundled [`action.yml`](action.yml) in any repository to gate Pull Requests and publish alerts to GitHub Security:
+
+```yaml
+- name: Run AgentTripwire Security Gate
+  uses: switin2006/agent-tripwire@main
+  with:
+    target: ./artifacts
+    format: sarif
+    output: tripwire.sarif
+    fail-on: HIGH
+
+- name: Upload SARIF to GitHub Code Scanning
+  if: always()
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: tripwire.sarif
+```
+
+#### Policy-as-Code & Baseline Suppression (`tripwire.toml`)
+```bash
+# Scaffold tripwire.toml (custom regex rules, extra PII keys, exclusions, severity gates)
+tripwire init
+
+# Record legacy findings into a baseline so CI only fails on newly introduced violations
+tripwire audit ./artifacts --write-baseline .tripwire-baseline.json
+tripwire audit ./artifacts --baseline .tripwire-baseline.json --format markdown
+```
+
+#### Embed in Python Agent Frameworks (LangGraph / CrewAI / Custom Harnesses)
+```python
+from tripwire import ForensicAuditor, load_policy
+
+auditor = ForensicAuditor(policy=load_policy())
+report = auditor.audit_text(tool_output, source_name="agent-tool-call")
+if not report.passed:
+    raise RuntimeError(f"Blocked unsafe agent output: {report.findings[0].summary}")
+```
+
+#### `pre-commit` Framework Hook (`.pre-commit-hooks.yaml`)
+```yaml
+repos:
+  - repo: https://github.com/switin2006/agent-tripwire
+    rev: main
+    hooks:
+      - id: agent-tripwire-staged
 ```
 
 ### Live Red-Team Rollouts with Harbor
@@ -288,14 +343,20 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/AUTHORING_GUIDE.md](docs/AUTHOR
 
 ```
 agent-tripwire/
-├── src/tripwire/                    # Installable Python engine & CLI (`tripwire`)
-│   ├── auditor.py                   # 5 post-execution disk forensic detectors (CY.CT..CY.VE)
+├── src/tripwire/                    # Zero-dependency Python SDK & CLI (`tripwire`)
+│   ├── auditor.py                   # Extended forensic detectors (CY.CT..CY.VE, Luhn, JWT/PEM/ZIP)
+│   ├── policy.py                    # Policy-as-code (`tripwire.toml`), CWE/OWASP metadata & baselines
+│   ├── reporters.py                 # SARIF v2.1.0, JUnit XML, GitHub PR Markdown, JSON & Text
+│   ├── guard.py                     # Runtime `guard`, `watch`, `scan-staged`, `install-hook`, `verify`
 │   ├── replay.py                    # ATIF v1.8 autonomous agent trajectory analyzer & replay
-│   ├── dashboard.py                 # Standalone interactive dark-mode HTML dashboard generator
+│   ├── dashboard.py                 # Standalone interactive Security Ops HTML dashboard + playground
 │   ├── runner.py                    # Harbor red-team evaluation orchestrator
 │   ├── registry.py                  # Environment discovery & task.toml parser
-│   └── cli.py                       # Unified CLI (list, audit, replay, run, dashboard)
-├── tests/                           # Unit tests for auditor, trajectory replay & dashboard
+│   └── cli.py                       # Unified CLI (`guard`, `watch`, `audit`, `verify`, `init`, etc.)
+├── tests/                           # 20 unit tests covering auditor, policy, SARIF, guardrails & CLI
+├── action.yml                       # Reusable GitHub Composite Action (Code Scanning / SARIF)
+├── .pre-commit-hooks.yaml           # Standard `pre-commit` framework hook definition
+├── tripwire.example.toml            # Production policy-as-code configuration reference
 ├── environments/                    # 5 stand-alone RLE environments (Harbor v1.4)
 │   ├── env-api-gateway-auth/        # CY.CT — Credential Theft
 │   ├── env-analytics-pipeline/      # CY.UD — Unauthorized Data Collection
