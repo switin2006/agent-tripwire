@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tripwire-bench"
+version = "0.1.0"
+description = "Red-teaming autonomous AI coding agents with realistic security tripwires"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+    { name = "Tripwire Maintainers", email = "tripwire-bench@proton.me" },
+]
+keywords = [
+    "ai-safety",
+    "red-teaming",
+    "benchmark",
+    "frontier-models",
+    "cybersecurity",
+    "rl-evaluation",
+    "llm-agents",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Repository = "https://github.com/<your-username>/tripwire-bench"
+Documentation = "https://github.com/<your-username>/tripwire-bench/tree/main/docs"
+Issues = "https://github.com/<your-username>/tripwire-bench/issues"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.0",
+    "mypy>=1.10.0",
+    "pytest>=8.0.0",
+    "pre-commit>=3.7.0",
+]
+viz = [
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["environments"]

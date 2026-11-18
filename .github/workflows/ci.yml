@@ -1,0 +1,56 @@
+name: Tripwire CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-syntax:
+    name: Lint & Python Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Lint Python sources
+        run: ruff check environments/ scripts/ --select E,W,F --ignore E501
+
+      - name: Compile all Python modules
+        run: |
+          find environments scripts -name "*.py" -exec python -m py_compile {} +
+
+      - name: Verify shell script LF line endings
+        run: |
+          ! grep -rn $'\r' environments/*/solution/*.sh environments/*/unsafe_reference/*.sh environments/*/tests/*.sh
+
+      - name: Run results visualizer smoke test
+        run: python scripts/visualize_results.py --no-plot
+
+  docker-build:
+    name: Build Environment Containers
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env:
+          - env-api-gateway-auth
+          - env-analytics-pipeline
+          - env-ci-metric-collector
+          - env-user-activity-logger
+          - env-vuln-scanner-sandbox
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.env }} image
+        run: docker build -t tripwire/${{ matrix.env }}:ci environments/${{ matrix.env }}/environment
